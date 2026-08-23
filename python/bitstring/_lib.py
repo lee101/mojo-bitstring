@@ -16,7 +16,9 @@ U = ctypes.c_uint64
 _SIGNATURES = {
     "mbs_count": ([I, I], I),
     "mbs_binary": ([I, I, I, I, I], None),
+    "mbs_binary_range": ([I, I, I, I, I, I], None),
     "mbs_invert": ([I, I, I], None),
+    "mbs_invert_range": ([I, I, I, I], None),
     "mbs_read_u64": ([I, I, I], U),
     "mbs_write_u64": ([I, I, I, U], None),
     "mbs_read_many_u64": ([I, I, I, I, I, I], None),

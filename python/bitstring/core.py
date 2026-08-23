@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import io
 import math
 import re
@@ -13,6 +14,20 @@ from typing import Any, Iterable, Iterator
 import numpy as np
 
 from ._lib import addr, lib
+
+
+_PARALLEL_BYTES = 4 * 1024 * 1024
+_PARALLEL_TASKS = 4
+_BITWISE_POOL = ThreadPoolExecutor(max_workers=_PARALLEL_TASKS)
+
+
+def _parallel_ranges(size: int) -> list[tuple[int, int]]:
+    chunk = (size + _PARALLEL_TASKS - 1) // _PARALLEL_TASKS
+    chunk = (chunk + 63) & ~63
+    return [
+        (start, min(start + chunk, size))
+        for start in range(0, size, chunk)
+    ]
 
 
 class Error(Exception):
@@ -528,13 +543,29 @@ class Bits:
             raise ValueError("bitstrings must have equal length")
         data = np.empty((self._len + 7) // 8, dtype=np.uint8)
         if data.size:
-            lib().mbs_binary(
-                addr(self._data, np.uint8),
-                addr(right._data, np.uint8),
-                addr(data, np.uint8),
-                data.size,
-                operation,
-            )
+            library = lib()
+            left_addr = addr(self._data, np.uint8)
+            right_addr = addr(right._data, np.uint8)
+            data_addr = addr(data, np.uint8)
+            if data.size < _PARALLEL_BYTES:
+                library.mbs_binary(
+                    left_addr, right_addr, data_addr, data.size, operation
+                )
+            else:
+                futures = [
+                    _BITWISE_POOL.submit(
+                        library.mbs_binary_range,
+                        left_addr,
+                        right_addr,
+                        data_addr,
+                        start,
+                        stop,
+                        operation,
+                    )
+                    for start, stop in _parallel_ranges(data.size)
+                ]
+                for future in futures:
+                    future.result()
         _mask_padding(data, self._len)
         return self.__class__._from_data(data, self._len)
 
@@ -555,9 +586,24 @@ class Bits:
         if not self._len:
             raise Error("cannot invert an empty bitstring")
         data = np.empty((self._len + 7) // 8, dtype=np.uint8)
-        lib().mbs_invert(
-            addr(self._data, np.uint8), addr(data, np.uint8), data.size
-        )
+        library = lib()
+        source_addr = addr(self._data, np.uint8)
+        data_addr = addr(data, np.uint8)
+        if data.size < _PARALLEL_BYTES:
+            library.mbs_invert(source_addr, data_addr, data.size)
+        else:
+            futures = [
+                _BITWISE_POOL.submit(
+                    library.mbs_invert_range,
+                    source_addr,
+                    data_addr,
+                    start,
+                    stop,
+                )
+                for start, stop in _parallel_ranges(data.size)
+            ]
+            for future in futures:
+                future.result()
         _mask_padding(data, self._len)
         return self.__class__._from_data(data, self._len)
 

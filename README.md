@@ -75,19 +75,19 @@ This prints:
 ## Benchmarks
 
 Measured on an Intel Xeon E5-2697 v4 at 2.30 GHz, Linux 6.8.0-136-generic,
-Python 3.13.14, Mojo `1.0.0b3.dev2026072406 (ff9655c1)`, and upstream
+Python 3.13.14, Mojo `1.1.0.dev2026081105 (e929a99e)`, and upstream
 `bitstring 4.4.0`. These are the best of five runs from `pixi run bench`;
 inputs are preconstructed unless the operation says pack. A ratio above 1
 means Mojo is faster.
 
 | operation | mojo-bitstring | upstream bitstring | upstream / Mojo |
 |---|---:|---:|---:|
-| count set bits, 16 MiB | 2.957 ms | 7.718 ms | 2.61x |
-| bitwise AND, 16 MiB | 8.685 ms | 8.718 ms | 1.00x |
-| invert, 16 MiB | 4.003 ms | 6.469 ms | 1.62x |
-| find 64-bit value, 4 MiB byte-aligned | 2.231 ms | 4.746 ms | 2.13x |
-| pack Array uint12, 500k values | 417.068 ms | 4170.346 ms | 10.00x |
-| parse Array uint12, 500k values | 115.017 ms | 2335.669 ms | 20.31x |
+| count set bits, 16 MiB | 1.978 ms | 7.697 ms | 3.89x |
+| bitwise AND, 16 MiB | 2.120 ms | 8.089 ms | 3.82x |
+| invert, 16 MiB | 1.564 ms | 5.992 ms | 3.83x |
+| find 64-bit value, 4 MiB byte-aligned | 2.306 ms | 3.281 ms | 1.42x |
+| pack Array uint12, 500k values | 249.844 ms | 3230.849 ms | 12.93x |
+| parse Array uint12, 500k values | 67.955 ms | 2173.370 ms | 31.98x |
 
 The table is the direct output of the final benchmark run. Timings on a shared
 machine vary, so the table is a reproducible snapshot rather than a general
@@ -110,12 +110,15 @@ validation stay in Python, while repeated fixed-width fields use bulk Mojo
 kernels rather than one FFI call per value.
 
 Bitwise transforms use unaligned 64-bit SIMD vectors with scalar remainder
-loops. Inputs at or above 4 MiB are split into four independent CPU tasks;
-smaller inputs stay serial to avoid thread-launch overhead. Existing `Bits`
-operands pass directly to Mojo without a defensive full-buffer copy, and result
-buffers are not zero-filled before kernels that overwrite every byte.
+loops. Inputs at or above 4 MiB are split into four independent Mojo SIMD ranges
+through a persistent CPU worker pool; smaller inputs stay serial to avoid task
+dispatch overhead. Existing `Bits` operands pass directly to Mojo without a
+defensive full-buffer copy, and result buffers are not zero-filled before
+kernels that overwrite every byte.
 
-No GPU path is included.
+No GPU path is included. The targeted packed-bit transforms and search perform
+well below two operations per byte moved, so host-device transfers and kernel
+launches would dominate rather than accelerate them.
 
 ## Development
 

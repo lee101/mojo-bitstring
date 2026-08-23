@@ -153,8 +153,8 @@ def test_bitwise_parallel_threshold_parity(size):
     right_raw = np.arange(size, dtype=np.uint8)[::-1].copy()
     left = mojo.Bits(left_raw)
     right = mojo.Bits(right_raw)
-    result = left & right
-    assert result.tobytes() == np.bitwise_and(left_raw, right_raw).tobytes()
+    assert (left & right).tobytes() == np.bitwise_and(left_raw, right_raw).tobytes()
+    assert (~left).tobytes() == np.bitwise_not(left_raw).tobytes()
 
 
 def test_count_large_parity():

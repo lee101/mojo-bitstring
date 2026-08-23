@@ -181,6 +181,21 @@ def binary_range(
             i += 1
 
 
+def invert_range(src: BPtr, dst: BPtr, start: Int, stop: Int):
+    var i = start
+    while i + VECTOR_BYTES <= stop:
+        dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[alignment=1](
+            0,
+            ~src.unsafe_offset(i)
+            .unsafe_bitcast[UInt64]()
+            .unsafe_load[width=W, alignment=1](),
+        )
+        i += VECTOR_BYTES
+    while i < stop:
+        dst[unsafe_offset=i] = ~src[unsafe_offset=i]
+        i += 1
+
+
 @export("mbs_count")
 def mbs_count(src_addr: Int, nbytes: Int) abi("C") -> Int:
     var src = BPtr(unsafe_from_address=src_addr)
@@ -212,22 +227,42 @@ def mbs_binary(
     binary_range(a, b, dst, 0, nbytes, operation)
 
 
+@export("mbs_binary_range")
+def mbs_binary_range(
+    a_addr: Int,
+    b_addr: Int,
+    dst_addr: Int,
+    start: Int,
+    stop: Int,
+    operation: Int,
+) abi("C"):
+    binary_range(
+        BPtr(unsafe_from_address=a_addr),
+        BPtr(unsafe_from_address=b_addr),
+        BPtr(unsafe_from_address=dst_addr),
+        start,
+        stop,
+        operation,
+    )
+
+
 @export("mbs_invert")
 def mbs_invert(src_addr: Int, dst_addr: Int, nbytes: Int) abi("C"):
     var src = BPtr(unsafe_from_address=src_addr)
     var dst = BPtr(unsafe_from_address=dst_addr)
-    var i = 0
-    while i + VECTOR_BYTES <= nbytes:
-        dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[alignment=1](
-            0,
-            ~src.unsafe_offset(i)
-            .unsafe_bitcast[UInt64]()
-            .unsafe_load[width=W, alignment=1](),
-        )
-        i += VECTOR_BYTES
-    while i < nbytes:
-        dst[unsafe_offset=i] = ~src[unsafe_offset=i]
-        i += 1
+    invert_range(src, dst, 0, nbytes)
+
+
+@export("mbs_invert_range")
+def mbs_invert_range(
+    src_addr: Int, dst_addr: Int, start: Int, stop: Int
+) abi("C"):
+    invert_range(
+        BPtr(unsafe_from_address=src_addr),
+        BPtr(unsafe_from_address=dst_addr),
+        start,
+        stop,
+    )
 
 
 @export("mbs_read_u64")

@@ -1,15 +1,13 @@
 """MSB-first packed-bit kernels exposed through a stable C ABI."""
 
-from std.algorithm import parallelize
 from std.sys.info import simd_width_of
+from std.memory import Pointer
 
-comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
-comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
-comptime UPtr = UnsafePointer[UInt64, AnyOrigin[mut=True]]
+comptime BPtr = Pointer[UInt8, AnyOrigin[mut=True]]
+comptime IPtr = Pointer[Int64, AnyOrigin[mut=True]]
+comptime UPtr = Pointer[UInt64, AnyOrigin[mut=True]]
 comptime W = simd_width_of[DType.float64]()
 comptime VECTOR_BYTES = W * 8
-comptime BINARY_PARALLEL_THRESHOLD = 4 * 1024 * 1024
-comptime BINARY_TASKS = 4
 
 
 def mask(index: Int) -> UInt8:
@@ -17,16 +15,16 @@ def mask(index: Int) -> UInt8:
 
 
 def get_bit(data: BPtr, index: Int) -> Bool:
-    return (data[index >> 3] & mask(index)) != 0
+    return (data[unsafe_offset=index >> 3] & mask(index)) != 0
 
 
 def put_bit(data: BPtr, index: Int, value: Bool):
     var byte_index = index >> 3
     var m = mask(index)
     if value:
-        data[byte_index] |= m
+        data[unsafe_offset=byte_index] |= m
     else:
-        data[byte_index] &= ~m
+        data[unsafe_offset=byte_index] &= ~m
 
 
 def pop_count64(value: UInt64) -> Int:
@@ -55,23 +53,32 @@ def write_u64(data: BPtr, start: Int, width: Int, value: UInt64):
         )
 
 
-def equal_at(data: BPtr, pattern: BPtr, position: Int, pattern_bits: Int) -> Bool:
+def equal_at(
+    data: BPtr, pattern: BPtr, position: Int, pattern_bits: Int
+) -> Bool:
     for i in range(pattern_bits):
         if get_bit(data, position + i) != get_bit(pattern, i):
             return False
     return True
 
 
-def equal_bytes(data: BPtr, pattern: BPtr, byte_position: Int, count: Int) -> Bool:
+def equal_bytes(
+    data: BPtr, pattern: BPtr, byte_position: Int, count: Int
+) -> Bool:
     var i = 0
     while i + 8 <= count:
-        if (data + byte_position + i).bitcast[UInt64]().load[alignment=1]() != (
-            pattern + i
-        ).bitcast[UInt64]().load[alignment=1]():
+        if (
+            data.unsafe_offset(byte_position + i)
+            .unsafe_bitcast[UInt64]()
+            .unsafe_load[alignment=1]()
+            != pattern.unsafe_offset(i)
+            .unsafe_bitcast[UInt64]()
+            .unsafe_load[alignment=1]()
+        ):
             return False
         i += 8
     while i < count:
-        if data[byte_position + i] != pattern[i]:
+        if data[unsafe_offset=byte_position + i] != pattern[unsafe_offset=i]:
             return False
         i += 1
     return True
@@ -87,7 +94,7 @@ def find_aligned_bytes(
     if count == 1:
         var position = first_byte
         while position <= last_byte:
-            if data[position] == pattern[0]:
+            if data[unsafe_offset=position] == pattern[unsafe_offset=0]:
                 return position
             position += 1
         return -1
@@ -95,8 +102,8 @@ def find_aligned_bytes(
     var position = first_byte
     var pattern_last = count - 1
     while position <= last_byte:
-        var probe = data[position + pattern_last]
-        if probe == pattern[pattern_last] and equal_bytes(
+        var probe = data[unsafe_offset=position + pattern_last]
+        if probe == pattern[unsafe_offset=pattern_last] and equal_bytes(
             data, pattern, position, count
         ):
             return position
@@ -104,7 +111,7 @@ def find_aligned_bytes(
         var shift = count
         var pattern_position = pattern_last - 1
         while pattern_position >= 0:
-            if pattern[pattern_position] == probe:
+            if pattern[unsafe_offset=pattern_position] == probe:
                 shift = pattern_last - pattern_position
                 break
             pattern_position -= 1
@@ -123,36 +130,54 @@ def binary_range(
     var i = start
     if operation == 0:
         while i + VECTOR_BYTES <= stop:
-            (dst + i).bitcast[UInt64]().store[alignment=1](
+            dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[
+                alignment=1
+            ](
                 0,
-                (a + i).bitcast[UInt64]().load[width=W, alignment=1]()
-                & (b + i).bitcast[UInt64]().load[width=W, alignment=1](),
+                a.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1]()
+                & b.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1](),
             )
             i += VECTOR_BYTES
         while i < stop:
-            dst[i] = a[i] & b[i]
+            dst[unsafe_offset=i] = a[unsafe_offset=i] & b[unsafe_offset=i]
             i += 1
     elif operation == 1:
         while i + VECTOR_BYTES <= stop:
-            (dst + i).bitcast[UInt64]().store[alignment=1](
+            dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[
+                alignment=1
+            ](
                 0,
-                (a + i).bitcast[UInt64]().load[width=W, alignment=1]()
-                | (b + i).bitcast[UInt64]().load[width=W, alignment=1](),
+                a.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1]()
+                | b.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1](),
             )
             i += VECTOR_BYTES
         while i < stop:
-            dst[i] = a[i] | b[i]
+            dst[unsafe_offset=i] = a[unsafe_offset=i] | b[unsafe_offset=i]
             i += 1
     else:
         while i + VECTOR_BYTES <= stop:
-            (dst + i).bitcast[UInt64]().store[alignment=1](
+            dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[
+                alignment=1
+            ](
                 0,
-                (a + i).bitcast[UInt64]().load[width=W, alignment=1]()
-                ^ (b + i).bitcast[UInt64]().load[width=W, alignment=1](),
+                a.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1]()
+                ^ b.unsafe_offset(i)
+                .unsafe_bitcast[UInt64]()
+                .unsafe_load[width=W, alignment=1](),
             )
             i += VECTOR_BYTES
         while i < stop:
-            dst[i] = a[i] ^ b[i]
+            dst[unsafe_offset=i] = a[unsafe_offset=i] ^ b[unsafe_offset=i]
             i += 1
 
 
@@ -162,10 +187,14 @@ def mbs_count(src_addr: Int, nbytes: Int) abi("C") -> Int:
     var total = 0
     var i = 0
     while i + 8 <= nbytes:
-        total += pop_count64((src + i).bitcast[UInt64]().load[alignment=1]())
+        total += pop_count64(
+            src.unsafe_offset(i)
+            .unsafe_bitcast[UInt64]()
+            .unsafe_load[alignment=1]()
+        )
         i += 8
     while i < nbytes:
-        var v = src[i]
+        var v = src[unsafe_offset=i]
         while v != 0:
             v &= v - 1
             total += 1
@@ -180,20 +209,7 @@ def mbs_binary(
     var a = BPtr(unsafe_from_address=a_addr)
     var b = BPtr(unsafe_from_address=b_addr)
     var dst = BPtr(unsafe_from_address=dst_addr)
-    if nbytes < BINARY_PARALLEL_THRESHOLD:
-        binary_range(a, b, dst, 0, nbytes, operation)
-        return
-
-    var chunk_size = (nbytes + BINARY_TASKS - 1) // BINARY_TASKS
-
-    @parameter
-    def process_chunk(task: Int):
-        var start = task * chunk_size
-        var stop = min(start + chunk_size, nbytes)
-        if start < stop:
-            binary_range(a, b, dst, start, stop, operation)
-
-    parallelize[process_chunk](BINARY_TASKS, BINARY_TASKS)
+    binary_range(a, b, dst, 0, nbytes, operation)
 
 
 @export("mbs_invert")
@@ -202,13 +218,15 @@ def mbs_invert(src_addr: Int, dst_addr: Int, nbytes: Int) abi("C"):
     var dst = BPtr(unsafe_from_address=dst_addr)
     var i = 0
     while i + VECTOR_BYTES <= nbytes:
-        (dst + i).bitcast[UInt64]().store[alignment=1](
+        dst.unsafe_offset(i).unsafe_bitcast[UInt64]().unsafe_store[alignment=1](
             0,
-            ~(src + i).bitcast[UInt64]().load[width=W, alignment=1](),
+            ~src.unsafe_offset(i)
+            .unsafe_bitcast[UInt64]()
+            .unsafe_load[width=W, alignment=1](),
         )
         i += VECTOR_BYTES
     while i < nbytes:
-        dst[i] = ~src[i]
+        dst[unsafe_offset=i] = ~src[unsafe_offset=i]
         i += 1
 
 
@@ -236,7 +254,7 @@ def mbs_read_many_u64(
     var src = BPtr(unsafe_from_address=src_addr)
     var dst = UPtr(unsafe_from_address=dst_addr)
     for i in range(count):
-        dst[i] = read_u64(src, start + i * stride, width)
+        dst[unsafe_offset=i] = read_u64(src, start + i * stride, width)
 
 
 @export("mbs_write_many_u64")
@@ -251,7 +269,7 @@ def mbs_write_many_u64(
     var dst = BPtr(unsafe_from_address=dst_addr)
     var src = UPtr(unsafe_from_address=src_addr)
     for i in range(count):
-        write_u64(dst, start + i * stride, width, src[i])
+        write_u64(dst, start + i * stride, width, src[unsafe_offset=i])
 
 
 @export("mbs_copy_bits")
@@ -329,13 +347,13 @@ def mbs_findall(
             )
             if match_position < 0:
                 break
-            result[found] = Int64(match_position << 3)
+            result[unsafe_offset=found] = Int64(match_position << 3)
             found += 1
             byte_position = match_position + 1
         return found
     while position <= last and found < capacity:
         if equal_at(src, pattern, position, pattern_bits):
-            result[found] = Int64(position)
+            result[unsafe_offset=found] = Int64(position)
             found += 1
         position += step
     return found
@@ -364,8 +382,8 @@ def mbs_fill(dst_addr: Int, nbytes: Int, value: Int) abi("C"):
         UInt64(0xFFFFFFFFFFFFFFFF) if value != 0 else UInt64(0)
     )
     while i + VECTOR_BYTES <= nbytes:
-        dst.bitcast[UInt64]().store[alignment=1](i >> 3, vec)
+        dst.unsafe_bitcast[UInt64]().unsafe_store[alignment=1](i >> 3, vec)
         i += VECTOR_BYTES
     while i < nbytes:
-        dst[i] = byte
+        dst[unsafe_offset=i] = byte
         i += 1

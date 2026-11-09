@@ -78,6 +78,11 @@ def _mask_padding(data: np.ndarray, nbits: int) -> None:
 
 def _normal_range(length: int, start: int | None, end: int | None) -> tuple[int, int]:
     first, stop, _ = slice(start, end, 1).indices(length)
+    # Matches upstream _validate_slice: explicit out-of-range raises ValueError
+    if start is not None and not -length <= start <= length:
+        raise ValueError(f"Invalid slice positions for bitstring length {length}: start={start}, end={end if end is not None else length}.")
+    if end is not None and not -length <= end <= length:
+        raise ValueError(f"Invalid slice positions for bitstring length {length}: start={start if start is not None else 0}, end={end}.")
     return first, stop
 
 
@@ -252,18 +257,28 @@ class Bits:
 
     @property
     def uintbe(self) -> int:
+        if not self._len:  # Matches upstream Bits.uintbe on empty: Interpreter raises ValueError
+            raise InterpretError("cannot interpret an empty bitstring")
         return int.from_bytes(self.bytes, "big")
 
     @property
     def intbe(self) -> int:
+        if not self._len:  # Matches upstream Bits.intbe on empty
+            raise InterpretError("cannot interpret an empty bitstring")
         return int.from_bytes(self.bytes, "big", signed=True)
 
     @property
     def uintle(self) -> int:
+        # Matches upstream Bits.uintle on empty: non-empty bitarray expected
+        if not self._len:
+            raise ValueError("non-empty bitarray expected")
         return int.from_bytes(self.bytes, "little")
 
     @property
     def intle(self) -> int:
+        # Matches upstream Bits.intle on empty: non-empty bitarray expected
+        if not self._len:
+            raise ValueError("non-empty bitarray expected")
         return int.from_bytes(self.bytes, "little", signed=True)
 
     uintne = property(lambda self: self.uintle if sys.byteorder == "little" else self.uintbe)
@@ -328,8 +343,9 @@ class Bits:
         bytealigned: bool | None = None,
     ) -> tuple[int] | tuple[()]:
         pattern = Bits(bs)
+        # Matches upstream Bits.find with empty pattern: raises ValueError
         if not pattern:
-            raise ValueError("cannot search for an empty bitstring")
+            raise ValueError("Cannot find an empty bitstring.")
         first, stop = _normal_range(self._len, start, end)
         aligned = options.bytealigned if bytealigned is None else bytealigned
         if not self._data.size:
@@ -360,8 +376,9 @@ class Bits:
         bytealigned: bool | None = None,
     ) -> Iterator[int]:
         pattern = Bits(bs)
+        # Matches upstream Bits.findall with empty pattern: raises ValueError
         if not pattern:
-            raise ValueError("cannot search for an empty bitstring")
+            raise ValueError("Cannot find an empty bitstring.")
         first, stop = _normal_range(self._len, start, end)
         aligned = options.bytealigned if bytealigned is None else bytealigned
         limit = math.inf if count is None else max(0, int(count))
@@ -423,7 +440,7 @@ class Bits:
         self, bits: int, start: int | None = None, end: int | None = None, count: int | None = None
     ) -> Iterator["Bits"]:
         if bits <= 0:
-            raise ValueError("bits must be positive")
+            raise ValueError("Cannot cut - bits must be >= 0.")
         first, stop = _normal_range(self._len, start, end)
         produced = 0
         while first < stop and (count is None or produced < count):
@@ -440,6 +457,9 @@ class Bits:
         bytealigned: bool | None = None,
     ) -> Iterator["Bits"]:
         delim = Bits(delimiter)
+        # Matches upstream Bits.split with empty delimiter: raises ValueError
+        if not delim._len:
+            raise ValueError("split delimiter cannot be empty.")
         first, stop = _normal_range(self._len, start, end)
         yielded = 0
         cursor = first
@@ -500,6 +520,9 @@ class Bits:
         return self.__class__._from_data(data, values.size)
 
     def __add__(self, other):
+        # Matches upstream Bits.__add__: int requires Bits(int) spelling
+        if isinstance(other, int) and not isinstance(other, bool) and not isinstance(other, Bits):
+            raise TypeError("It's no longer possible to auto initialise a bitstring from an integer. Use 'Bits(5)' instead of just '5' as this makes it clearer that a bitstring of 5 zero bits will be created.")
         right = Bits(other)
         data = _zeroed(self._len + right._len)
         if self._len:
@@ -520,8 +543,19 @@ class Bits:
         return self.__class__(other) + self
 
     def __mul__(self, count: int):
+        # Matches upstream Bits.__mul__ for negative count: raises ValueError
+        if isinstance(count, bool) or not isinstance(count, int):
+            # Matches upstream sequence repeat TypeError for non-int
+            try:
+                count = count.__index__()  # type: ignore[attr-defined]
+            except AttributeError as exc:
+                raise TypeError(
+                    f"can't multiply sequence by non-int of type '{type(count).__name__}'"
+                ) from exc
         count = int(count)
-        if count <= 0:
+        if count < 0:
+            raise ValueError("Cannot multiply by a negative integer.")
+        if count == 0:
             return self.__class__()
         data = _zeroed(self._len * count)
         for i in range(count):
@@ -609,7 +643,7 @@ class Bits:
 
     def __lshift__(self, amount: int):
         if amount < 0:
-            raise ValueError("shift cannot be negative")
+            raise ValueError("Cannot shift by a negative amount.")
         if not self._len:
             raise ValueError("cannot shift an empty bitstring")
         amount = min(amount, self._len)
@@ -617,7 +651,7 @@ class Bits:
 
     def __rshift__(self, amount: int):
         if amount < 0:
-            raise ValueError("shift cannot be negative")
+            raise ValueError("Cannot shift by a negative amount.")
         if not self._len:
             raise ValueError("cannot shift an empty bitstring")
         amount = min(amount, self._len)
@@ -672,9 +706,13 @@ class BitArray(Bits):
     def overwrite(self, bs: Any, pos: int) -> None:
         value = Bits(bs)
         position = pos + self._len if pos < 0 else pos
-        if position < 0 or position + value._len > self._len:
-            raise ValueError("overwrite exceeds bitstring")
-        self._assign(self[:position] + value + self[position + value._len :])
+        if position < 0:
+            position = 0
+        # Matches upstream BitArray.overwrite: if pos + len(value) > len(self) it extends
+        if position + value._len > self._len:
+            self._assign(self[:position] + value)
+        else:
+            self._assign(self[:position] + value + self[position + value._len :])
 
     def delete(self, bits: int, pos: int) -> None:
         position = pos + self._len if pos < 0 else pos
@@ -758,6 +796,9 @@ class BitArray(Bits):
             self._data[index >> 3] ^= np.uint8(1 << (7 - (index & 7)))
 
     def rol(self, bits: int, start: int | None = None, end: int | None = None) -> None:
+        # Matches upstream BitArray.rol: negative amount raises ValueError
+        if bits < 0:
+            raise ValueError("Cannot rotate by negative amount.")
         first, stop = _normal_range(self._len, start, end)
         width = stop - first
         if not width:
@@ -766,11 +807,14 @@ class BitArray(Bits):
         self._assign(self[:first] + self[first + amount : stop] + self[first : first + amount] + self[stop:])
 
     def ror(self, bits: int, start: int | None = None, end: int | None = None) -> None:
+        # Matches upstream BitArray.ror: negative amount raises ValueError
+        if bits < 0:
+            raise ValueError("Cannot rotate by negative amount.")
         first, stop = _normal_range(self._len, start, end)
         width = stop - first
         if not width:
             raise Error("cannot rotate an empty bitstring")
-        self.rol((-bits) % width, first, stop)
+        self.rol((width - bits % width) % width, first, stop)
 
     def byteswap(
         self,
@@ -780,8 +824,9 @@ class BitArray(Bits):
         repeat: bool = True,
     ) -> int:
         first, stop = _normal_range(self._len, start, end)
+        # Matches upstream BitArray.byteswap: if range is not byte-aligned it does nothing
         if first & 7 or stop & 7:
-            raise ByteAlignError("byteswap range must be byte aligned")
+            return 0
         if fmt is None or fmt == 0:
             sizes = [(stop - first) // 8]
         elif isinstance(fmt, int):
@@ -889,9 +934,12 @@ class _StreamMixin:
 
     def read(self, fmt: int | str):
         if isinstance(fmt, int):
-            if fmt < 0 or self._pos + fmt > self._len:
+            if fmt < 0:
+                raise ValueError("Cannot read negative amount.")
+            if self._pos + fmt > self._len:
                 raise ReadError("read exceeds the bitstring")
-            result = Bits(self[self._pos : self._pos + fmt])
+            result = self.__class__(self[self._pos : self._pos + fmt])
+            result._pos = 0
             self._pos += fmt
             return result
         values, position = _unpack_from(self, self._pos, [fmt], {})
@@ -930,7 +978,8 @@ class _StreamMixin:
     def bytealign(self) -> int:
         skipped = (-self._pos) & 7
         if self._pos + skipped > self._len:
-            skipped = self._len - self._pos
+            # Matches upstream ConstBitStream.bytealign at EOF: raises ValueError
+            raise ValueError("Cannot seek past the end of the data.")
         self._pos += skipped
         return skipped
 

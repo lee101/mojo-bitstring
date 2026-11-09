@@ -74,11 +74,12 @@ This prints:
 
 ## Benchmarks
 
-Measured on an Intel Xeon E5-2697 v4 at 2.30 GHz, Linux 6.8.0-136-generic,
-Python 3.13.14, Mojo `1.1.0.dev2026081105 (e929a99e)`, and upstream
+Measured on an Intel Xeon E5-2697 v4 at 2.30 GHz, Linux 6.8.0-147-generic,
+Python 3.13.14, Mojo `1.2.0.dev2026092605 (236c32cb)`, and upstream
 `bitstring 4.4.0`. These are the best of five runs from `pixi run bench`;
 inputs are preconstructed unless the operation says pack. A ratio above 1
-means Mojo is faster.
+means Mojo is faster. Re-verified in `bench/verify.md` on the same host
+with `6.8.0-147-generic` (the `-136` kernel label was the older snapshot's).
 
 | operation | mojo-bitstring | upstream bitstring | upstream / Mojo |
 |---|---:|---:|---:|

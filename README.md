@@ -84,7 +84,7 @@ with `6.8.0-147-generic` (the `-136` kernel label was the older snapshot's).
 | operation | mojo-bitstring | upstream bitstring | upstream / Mojo |
 |---|---:|---:|---:|
 | count set bits, 16 MiB | 1.978 ms | 7.697 ms | 3.89x |
-| bitwise AND, 16 MiB | 2.120 ms | 8.089 ms | 3.82x |
+| bitwise AND, 16 MiB | 2.506 ms | 7.683 ms | 2.81x |
 | invert, 16 MiB | 1.564 ms | 5.992 ms | 3.83x |
 | find 64-bit value, 4 MiB byte-aligned | 2.306 ms | 3.281 ms | 1.42x |
 | pack Array uint12, 500k values | 249.844 ms | 3230.849 ms | 12.93x |
